@@ -46,12 +46,15 @@ Then do these steps:
    into `.experiment/`, and write `.experiment/measure.sh` if needed.
 3. **Block pushing for this clone.** Save the current push URL, then run
    `git remote set-url --push origin DISABLED` for every remote. Tell the user how to undo it.
-   **Check commit signing:** if `git config commit.gpgsign` is `true`, every experiment commit
-   would wait on a passphrase prompt and stall an unattended run. Tell the user, and fill the
-   template's commit command as `git -c commit.gpgsign=false commit`. Kept commits can be
-   re-signed when they are squashed for review.
+   **Agree commit authorship** (the user's confirm-git hook enforces it, if installed): ask
+   "Me only, GPG signed" or "Me + Claude, unsigned". Fill the template's `{{COMMIT_CMD}}` to match:
+   `git commit` (no Co-Authored-By line) or `git -c commit.gpgsign=false commit` (with the
+   `Co-Authored-By: Claude` trailer). With signing on, warn that each experiment commit may wait
+   on a GPG passphrase prompt unless gpg-agent caches it for the whole run.
+   Also warn: a hook that asks before every commit will stall an unattended loop, so the user
+   decides whether to stay nearby or relax that hook for the experiment branch.
 4. Write `.experiment/program.md` from `templates/program.md`, with every `{{...}}` filled in
-   (`{{COMMIT_CMD}}` is `git commit` unless step 3 said otherwise).
+   (`{{COMMIT_CMD}}` comes from the authorship choice in step 3).
 5. `python3 .experiment/judge.py init --measure "<cmd>" --gate "<cmd>" --direction <lower|higher>`
 6. Run the measure command once by hand, so the user can see it works and how long it takes.
 7. **Baseline:** `python3 .experiment/judge.py run "baseline"`. This measures 5 times and

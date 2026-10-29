@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """
-PreToolUse hook: never let Claude commit or push without showing you first.
+Hook: Claude never commits or pushes without you knowing, and never with the wrong author.
 
-For any Bash call that runs `git commit` or `git push`, it forces a permission prompt
-(even in auto mode) that says what, where, why, and whether anything leaves the machine.
-Every other command passes through untouched.
+1. Git author choice (once per session, per repo work):
+   - PreToolUse Edit|Write|NotebookEdit on a file inside a git repo, with no choice yet:
+     blocked, and Claude is told to ask you the "Git author" question.
+   - PostToolUse AskUserQuestion: your answer is read from the tool result and saved,
+     so Claude cannot record a choice you didn't make.
+     "Me only, GPG signed"  -> solo:     no Claude co-author line, normal (signed) commit
+     "Me + Claude, unsigned" -> coauthor: Co-Authored-By: Claude line, unsigned commit
+2. PreToolUse Bash with `git commit` / `git push`:
+   - a commit that doesn't match the choice (or has no choice) is blocked with the reason;
+   - otherwise a permission prompt (even in auto mode) shows what, where, why,
+     and whether anything leaves the machine.
 
-Register in ~/.claude/settings.json under hooks.PreToolUse with matcher "Bash":
-    python3 -I ~/.claude/hooks/confirm-git.py
+Register in ~/.claude/settings.json:
+    PreToolUse  matcher "Bash|Edit|Write|NotebookEdit": python3 -I ~/.claude/hooks/confirm-git.py
+    PostToolUse matcher "AskUserQuestion":              python3 -I ~/.claude/hooks/confirm-git.py
 """
 
 import json
@@ -16,10 +25,21 @@ import re
 import shlex
 import subprocess
 import sys
+from pathlib import Path
 
 SEPARATORS = {"&&", "||", ";", "|", "&", "(", ")"}
 # git global options that take a separate value: `git -C dir commit`, `git -c k=v push`
 VALUE_OPTS = {"-C", "-c", "--git-dir", "--work-tree", "--namespace"}
+STATE_DIR = Path(os.environ.get("CONFIRM_GIT_STATE", Path.home() / ".claude" / "state" / "git-author"))
+HEADER = "Git author"
+LABELS = {"Me only, GPG signed": "solo", "Me + Claude, unsigned": "coauthor"}
+ASK_INSTRUCTIONS = (
+    "Before changing files in a git repo, ask the user how commits should be authored. "
+    f"Use AskUserQuestion with header \"{HEADER}\" and exactly these two option labels: "
+    "\"Me only, GPG signed\" (no Co-Authored-By line, commit signed as usual) and "
+    "\"Me + Claude, unsigned\" (add the Co-Authored-By: Claude trailer, commit with -c commit.gpgsign=false). "
+    "The hook records the answer; then retry."
+)
 
 
 def git(cwd, *args):
@@ -28,6 +48,27 @@ def git(cwd, *args):
         return out.stdout.strip() if out.returncode == 0 else ""
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def mode_file(session_id):
+    return STATE_DIR / re.sub(r"[^A-Za-z0-9_-]", "_", session_id or "unknown")
+
+
+def get_mode(session_id):
+    try:
+        return mode_file(session_id).read_text().strip()
+    except OSError:
+        return ""
+
+
+def emit(event, decision=None, reason=None, context=None):
+    out = {"hookEventName": event}
+    if decision:
+        out["permissionDecision"] = decision
+        out["permissionDecisionReason"] = reason
+    if context:
+        out["additionalContext"] = context
+    print(json.dumps({"hookSpecificOutput": out}))
 
 
 def find_actions(command, cwd):
@@ -76,7 +117,22 @@ def message_of(args):
     return "(no -m given: an editor or a file supplies it)"
 
 
-def describe(action, args, d):
+def author_problem(mode, command):
+    """Why this commit command breaks the chosen author mode, or '' if it's fine."""
+    coauthored = re.search(r"co-authored-by:\s*claude", command, re.I)
+    unsigned = re.search(r"commit\.gpgsign=false|--no-gpg-sign", command)
+    if not mode:
+        return "No git author choice yet for this session. " + ASK_INSTRUCTIONS
+    if mode == "solo" and (coauthored or unsigned):
+        return ("The user chose \"Me only, GPG signed\": remove the Co-Authored-By: Claude line "
+                "and any commit.gpgsign=false / --no-gpg-sign, then retry.")
+    if mode == "coauthor" and not (coauthored and unsigned):
+        return ("The user chose \"Me + Claude, unsigned\": the message needs a "
+                "'Co-Authored-By: Claude ...' trailer and the commit needs -c commit.gpgsign=false. Retry with both.")
+    return ""
+
+
+def describe(action, args, d, mode):
     root = git(d, "rev-parse", "--show-toplevel") or d
     branch = git(d, "rev-parse", "--abbrev-ref", "HEAD") or "?"
     upstream = git(d, "rev-parse", "--abbrev-ref", "@{u}")
@@ -84,6 +140,7 @@ def describe(action, args, d):
 
     if action == "commit":
         lines.insert(0, "LOCAL COMMIT ONLY - nothing is sent to a remote.")
+        lines.append("Author:  " + {"solo": "you only, GPG signed", "coauthor": "you + Claude, unsigned"}.get(mode, "?"))
         flags = [f for f in ("--amend", "--no-verify", "-a", "--all") if f in args]
         if flags:
             lines.append("Flags:   " + " ".join(flags) + ("  (rewrites the last commit)" if "--amend" in args else ""))
@@ -104,31 +161,71 @@ def describe(action, args, d):
     return "\n".join(lines)
 
 
-def main():
-    data = json.load(sys.stdin)
-    if data.get("tool_name") != "Bash":
-        return
+def on_bash(data):
     command = data.get("tool_input", {}).get("command", "")
     why = data.get("tool_input", {}).get("description", "") or "(no description given)"
     cwd = data.get("cwd") or os.getcwd()
     if not re.search(r"\bgit\b[^\n]*\b(commit|push)\b", command):
         return  # fast path: most commands never get parsed
+    mode = get_mode(data.get("session_id"))
 
     try:
         actions = find_actions(command, cwd)
-        body = "\n\n".join(describe(*a) for a in actions)
     except ValueError:
-        actions, body = [None], f"Could not parse the command; review it below.\nWorking dir: {cwd}"
-    if not actions:
+        actions = None
+    if actions == []:
         return
+    if actions is None:
+        body = f"Could not parse the command; review it below.\nWorking dir: {cwd}"
+    else:
+        if any(a[0] == "commit" for a in actions):
+            problem = author_problem(mode, command)
+            if problem:
+                return emit("PreToolUse", "deny", problem)
+        body = "\n\n".join(describe(*a, mode) for a in actions)
 
-    reason = (f"Claude wants to run git:\n\n{body}\n\nWhy (Claude's description): {why}\n\n"
-              f"Full command:\n{command[:800]}")
-    print(json.dumps({"hookSpecificOutput": {
-        "hookEventName": "PreToolUse",
-        "permissionDecision": "ask",
-        "permissionDecisionReason": reason,
-    }}))
+    emit("PreToolUse", "ask", f"Claude wants to run git:\n\n{body}\n\nWhy (Claude's description): {why}\n\n"
+                              f"Full command:\n{command[:800]}")
+
+
+def on_edit(data):
+    if get_mode(data.get("session_id")):
+        return
+    path = data.get("tool_input", {}).get("file_path") or data.get("tool_input", {}).get("notebook_path") or ""
+    folder = os.path.dirname(path) or data.get("cwd") or "."
+    while folder and not os.path.isdir(folder):  # new file in a new folder: check the nearest existing one
+        folder = os.path.dirname(folder)
+    if folder and git(folder, "rev-parse", "--is-inside-work-tree") == "true":
+        emit("PreToolUse", "deny", f"{path} is in a git repo. " + ASK_INSTRUCTIONS)
+
+
+def on_question(data):
+    """Record the user's git author answer from the AskUserQuestion result."""
+    tool_input = data.get("tool_input", {})
+    questions = [q for q in tool_input.get("questions", []) if q.get("header") == HEADER]
+    if not questions:
+        return
+    answers = tool_input.get("answers") or {}
+    picked = [answers.get(q.get("question"), "") for q in questions]
+    blob = " ".join(picked) or json.dumps(data.get("tool_response", ""))  # fallback: search the result text
+    found = {mode for label, mode in LABELS.items() if label in blob}
+    if len(found) != 1:
+        return emit("PostToolUse", context="Git author answer not recognised; nothing recorded. Ask again if needed.")
+    mode = found.pop()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    mode_file(data.get("session_id")).write_text(mode + "\n")
+    emit("PostToolUse", context=f"Git author recorded for this session: {mode}.")
+
+
+def main():
+    data = json.load(sys.stdin)
+    tool = data.get("tool_name")
+    if tool == "Bash":
+        on_bash(data)
+    elif tool in ("Edit", "Write", "NotebookEdit"):
+        on_edit(data)
+    elif tool == "AskUserQuestion" and data.get("hook_event_name") == "PostToolUse":
+        on_question(data)
 
 
 if __name__ == "__main__":
