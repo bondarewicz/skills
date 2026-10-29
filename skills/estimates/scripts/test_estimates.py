@@ -196,12 +196,27 @@ class Ledger(Env):
 
 
 class StopHook(Env):
-    def test_blocks_a_human_scale_estimate_once(self):
+    def test_blocks_a_human_scale_estimate_with_a_recipe_for_the_corrected_line(self):
         out = json.loads(self.stop("Estimate: about half a day for me."))
         self.assertEqual(out["decision"], "block")
         self.assertIn("half a day", out["reason"])
-        self.assertIn("estimates skill", out["reason"])
-        self.assertIsNone(self.stop("Estimate: about half a day for me.", active=True))
+        self.assertIn("Claude: <median> to <p90> min", out["reason"])
+        self.assertIn("nothing else", out["reason"])
+
+    def test_correction_without_a_number_is_blocked_once_more_then_let_go(self):
+        self.stop("This will take one to two hours.")
+        again = json.loads(self.stop("Correction: that estimate should have been in measured minutes.", active=True))
+        self.assertEqual(again["decision"], "block")
+        self.assertIn("no number", again["reason"])
+        self.assertIsNone(self.stop("Still no number here.", active=True))
+
+    def test_correction_with_minutes_ends_the_follow_up(self):
+        self.stop("This will take one to two hours.")
+        self.assertIsNone(self.stop("Claude: 4 to 9 min (M, ~200 lines, n=154). You: ~2 min.", active=True))
+        self.assertIsNone(self.stop("Another hook made me continue; no numbers here.", active=True))
+
+    def test_continuation_caused_by_another_hook_is_not_judged(self):
+        self.assertIsNone(self.stop("No estimate was flagged this turn.", active=True))
 
     def test_logs_the_turn_even_when_already_continuing(self):
         self.stop("fine", active=True)

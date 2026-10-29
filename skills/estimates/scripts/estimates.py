@@ -8,8 +8,9 @@ Hook, SessionStart: prints the measured pace table and the estimating rule as co
 Hook, Stop:         logs the turn that just ended (active and idle seconds, tool calls, edits, lines
                     written, test runs, questions asked) to ~/.claude/state/estimates/ledger.jsonl, then
                     scans the reply for a human-scale estimate. Found: decision=block with the table and
-                    the rule, once per turn. ESTIMATES_MODE=warn shows the user a systemMessage instead;
-                    off disables the scan (the turn is still logged).
+                    the exact line shape to reply with; a correction that carries no number is blocked
+                    once more, then the turn may end. ESTIMATES_MODE=warn shows the user a systemMessage
+                    instead; off disables the scan (the turn is still logged).
 CLI:
   python3 estimates.py [--table]       the pace table
   python3 estimates.py --rebuild       rescan every transcript and rewrite the ledger
@@ -56,6 +57,9 @@ EXCLUDE = re.compile(r"\b(?:took|spent|elapsed|lasted|ago|was|were|has been|have
                      r"manually|junior|senior|you|your|yours|yourself|"
                      r"meetings?|calls?|workshops?|old|yesterday|last week|last month)\b", re.I)
 CODE = re.compile(r"```.*?```|`[^`\n]*`|https?://\S+", re.S)
+MINUTES = re.compile(r"\b\d+(?:\.\d+)?\s*(?:(?:to|-|–|or)\s*\d+(?:\.\d+)?\s*)?min(?:ute)?s?\b", re.I)
+SHAPE = ("Claude: <median> to <p90> min (<class>, ~<lines> lines in <files> files, n=<turns>). "
+         "You: ~<minutes> min (<what they read or decide>).")
 SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
 
 RULE = ('Estimating work Claude does itself: size it in files and lines, quote the class\'s median to p90 in '
@@ -252,24 +256,61 @@ def _session_start():
     return f"ESTIMATES (estimates hook).\n{table(read_ledger())}\n{RULE}"
 
 
+def _block_file(session_id):
+    return ledger_path().parent / f"block-{re.sub(r'[^A-Za-z0-9_-]', '_', str(session_id or 'unknown'))}.json"
+
+
+def _blocks_this_turn(session_id, start):
+    try:
+        state = json.loads(_block_file(session_id).read_text(encoding="utf-8"))
+        return state["count"] if state.get("start") == start else 0
+    except (OSError, ValueError, KeyError, TypeError):
+        return 0
+
+
+def _remember_blocks(session_id, start, count):
+    f = _block_file(session_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(json.dumps({"start": start, "count": count}), encoding="utf-8")
+
+
+def _follow_up(data, start, message):
+    """After our own block, the correction must carry a number: one more block, then let go."""
+    session = data.get("session_id")
+    if _blocks_this_turn(session, start) != 1:
+        return None
+    _remember_blocks(session, start, 2)
+    if MINUTES.search(message):
+        return None
+    reason = f"estimates: the correction has no number. Reply with only the corrected line:\n  {SHAPE}\n{table(read_ledger())}"
+    return json.dumps({"decision": "block", "reason": reason})
+
+
 def _stop(data):
+    start = ""
     if data.get("transcript_path"):
         rows = turns(os.path.expanduser(data["transcript_path"]))
         if rows:
             append_row(rows[-1])
+            start = rows[-1]["start"]
     mode = os.environ.get("ESTIMATES_MODE", "block").lower()
-    if mode == "off" or data.get("stop_hook_active"):
+    if mode == "off":
         return None
-    hits = find_estimates(data.get("last_assistant_message") or "")
+    message = data.get("last_assistant_message") or ""
+    if data.get("stop_hook_active"):
+        return _follow_up(data, start, message) if mode == "block" else None
+    hits = find_estimates(message)
     if not hits:
         return None
     found = "\n".join(f'  "{phrase}" in: {sentence[:160]}' for phrase, sentence in hits[:5])
     if mode == "warn":
         return json.dumps({"systemMessage": f"estimates: the reply estimates in human units:\n{found}"})
+    _remember_blocks(data.get("session_id"), start, 1)
     reason = (f"estimates: the reply estimates in human units, which measure a person typing:\n{found}\n"
-              f"Rewrite those estimates from the measured pace below, then finish the reply. "
-              f"If a sentence estimates a human's work, say so in it (\"for a human developer\").\n"
-              f"{table(read_ledger())}\n{RULE}")
+              f"Continue with the corrected estimate and nothing else: one line per flagged sentence, "
+              f"numbers from the table below, in this shape:\n  {SHAPE}\n"
+              f"Pick the class by the lines the work will write. A sentence that estimates a human's work "
+              f"keeps its hours and says so (\"for a human developer\").\n{table(read_ledger())}")
     return json.dumps({"decision": "block", "reason": reason})
 
 

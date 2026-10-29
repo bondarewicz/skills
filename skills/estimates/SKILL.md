@@ -40,8 +40,10 @@ the number.
 ## When the hook blocks a reply
 
 The Stop hook found hours, days, "half a day", an afternoon, weeks or sprints next to an estimate
-word. Rewrite that sentence as the line above. Estimating a human's work (a hiring plan, a team's
-sprint) is fine: say "for a human developer" in the same sentence and the hook lets it through.
+word. Continue with the corrected line only, numbers from the table: `Claude: 4 to 9 min (M, ~200
+lines, n=154). You: ~2 min.` Not an apology, not "that should have been minutes": a correction
+without a number is blocked once more, then the hook lets go. Estimating a human's work (a hiring
+plan, a team's sprint) is fine: say "for a human developer" in the same sentence and it passes.
 
 ## Check and inspect
 
