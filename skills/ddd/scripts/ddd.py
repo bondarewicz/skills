@@ -39,12 +39,12 @@ USING_RE = re.compile(r"^\s*(?:global\s+)?using\s+(?:static\s+)?(?!var\b)([A-Za-
 
 
 def is_domain_path(path):
-    parts = [p.lower() for p in re.split(r"[\\/]+", path) if p]
-    if not parts or not parts[-1].endswith(".cs"):
+    parts = [p for p in re.split(r"[\\/]+", path) if p]
+    if not parts or not parts[-1].endswith(".cs") or re.search(r"Tests?\.cs$", parts[-1]):
         return False
-    if parts[-1].endswith(("tests.cs", "test.cs")) or any(p in ("test", "tests") for p in parts[:-1]):
+    if any(p.lower() in ("test", "tests") for p in parts[:-1]):
         return False
-    return any(p == "domain" or p.endswith(".domain") for p in parts[:-1])
+    return any(_is_domain_dir(p) for p in parts[:-1])
 
 
 def usings(text):
@@ -144,13 +144,14 @@ def _is_domain_dir(name):
 
 
 def find_domain_dir(root, depth=6):
-    for cur, dirs, _ in os.walk(root):
+    for cur, dirs, names in os.walk(root):
         dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
-        for d in dirs:
-            if _is_domain_dir(d):
-                return os.path.relpath(os.path.join(cur, d), root)
-        if os.path.relpath(cur, root).count(os.sep) + 1 >= depth:
+        parts = os.path.relpath(cur, root).split(os.sep)
+        if len(parts) >= depth:
             dirs[:] = []
+        hit = next((i for i, p in enumerate(parts) if _is_domain_dir(p)), None)
+        if hit is not None and any(is_domain_path(os.path.join(cur, n)) for n in names):
+            return os.sep.join(parts[:hit + 1])
     return None
 
 

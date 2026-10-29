@@ -22,12 +22,13 @@ def event(tool, path, **ti):
 
 class DomainPath(unittest.TestCase):
     def test_yes(self):
-        for p in ("src/Orders/Domain/Order.cs", "Acme.Orders.Domain/Order.cs", "domain/x.cs", "/abs/ACME.DOMAIN/A.cs"):
+        for p in ("src/Orders/Domain/Order.cs", "Acme.Orders.Domain/Order.cs", "domain/x.cs", "/abs/ACME.DOMAIN/A.cs",
+                  "Orders.Domain/Contest.cs", "Orders.Domain/Latest.cs"):
             self.assertTrue(is_domain_path(p), p)
 
     def test_no(self):
         for p in ("Acme.Orders.Api/C.cs", "Acme.DomainEvents/X.cs", "src/Orders/Domain/Order.ts", "Orders.Domain/OrderTests.cs",
-                  "Orders.Domain/tests/X.cs", "Orders.Domain/Test/X.cs"):
+                  "Orders.Domain/OrderTest.cs", "Orders.Domain/tests/X.cs", "Orders.Domain/Test/X.cs"):
             self.assertFalse(is_domain_path(p), p)
 
 
@@ -121,12 +122,22 @@ class SessionStart(unittest.TestCase):
         ddd.SKILL_NEXT_TO_SCRIPT = self.saved
 
     def test_finds_domain_dir(self):
-        os.makedirs(os.path.join(self.d, "src", "Acme.Orders.Domain"))
+        os.makedirs(os.path.join(self.d, "src", "Aaa", "domain"))
+        Path(self.d, "src", "Aaa", "domain", "user.ts").write_text("")
+        os.makedirs(os.path.join(self.d, "src", "Acme.Orders.Domain", "Orders"))
+        Path(self.d, "src", "Acme.Orders.Domain", "Orders", "Order.cs").write_text("")
         os.makedirs(os.path.join(self.d, "node_modules", "x", "domain"))
+        Path(self.d, "node_modules", "x", "domain", "X.cs").write_text("")
         self.assertEqual(find_domain_dir(self.d), os.path.join("src", "Acme.Orders.Domain"))
+
+    def test_ignores_domain_dirs_without_cs(self):
+        os.makedirs(os.path.join(self.d, "src", "domain"))
+        Path(self.d, "src", "domain", "user.ts").write_text("")
+        self.assertIsNone(find_domain_dir(self.d))
 
     def test_emits_rules_from_installed_skill(self):
         os.makedirs(os.path.join(self.d, "X.Domain"))
+        Path(self.d, "X.Domain", "X.cs").write_text("")
         out = session_start({"hook_event_name": "SessionStart", "cwd": self.d}, self.env)
         ctx = out["additionalContext"]
         self.assertTrue(ctx.startswith("DDD mode: domain code at X.Domain."), ctx[:60])
@@ -136,6 +147,7 @@ class SessionStart(unittest.TestCase):
     def test_silent_without_domain_or_skill(self):
         self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, self.env))
         os.makedirs(os.path.join(self.d, "X.Domain"))
+        Path(self.d, "X.Domain", "X.cs").write_text("")
         self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, {"CLAUDE_CONFIG_DIR": self.d}))
         self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, {**self.env, "DDD_MODE": "off"}))
 

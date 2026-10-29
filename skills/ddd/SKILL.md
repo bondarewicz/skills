@@ -23,15 +23,14 @@ storage, hosting, logging or mapping. Strategy (subdomains, context maps, coupli
 - One aggregate protects one set of invariants; each rule is checked in the method that could break it.
 - Keep it small: only the entities that must change together. Other aggregates by ID, never as a field.
 - One aggregate per transaction. Consistency across aggregates is eventual, through domain events.
-- Every state change raises a past-tense event. A transition without an event is a bug.
+- A state change that other aggregates or contexts react to raises a past-tense event.
 
 ## Building blocks
 ```csharp
 public readonly record struct OrderId(Guid Value) { public static OrderId New() => new(Guid.NewGuid()); }
-public sealed record Money(decimal Amount, string Currency)
+public sealed record Money(decimal Amount, Currency Currency)
 {
-    public static Money Of(decimal amount, string currency) =>
-        amount < 0 ? throw new NegativeMoney(amount) : new(amount, currency);
+    public decimal Amount { get; } = Amount >= 0 ? Amount : throw new NegativeMoney(Amount);
 }
 public sealed record OrderPlaced(OrderId OrderId, CustomerId CustomerId) : IDomainEvent;
 public abstract class AggregateRoot<TId>
@@ -59,9 +58,10 @@ public sealed class Order : AggregateRoot<OrderId>
 
 public interface IOrderRepository { Task<Order?> Get(OrderId id, CancellationToken ct); void Add(Order order); }
 ```
-- Value object: `record` or `readonly record struct`, immutable, equal by value, validated in a static
-  factory. Any primitive that carries a rule or unit (`Money`, `Email`, `Quantity`) becomes one.
-  IDs are typed (`OrderId`), never a bare `Guid`.
+- Value object: `record` or `readonly record struct`, immutable, equal by value, validated so an
+  invalid instance cannot be constructed (property initializer or static factory). Any primitive
+  that carries a rule or unit (`Money`, `Currency`, `Email`, `Quantity`) becomes one. IDs are typed
+  (`OrderId`), never a bare `Guid`.
 - Entity: identity by ID, private setters, behaviour methods. The ORM gets a private parameterless
   constructor and nothing else: no `[Table]`, no navigation to another aggregate.
 - Domain event: `record`, past tense, raised by the aggregate, dispatched after the unit of work commits.
@@ -76,7 +76,7 @@ public interface IOrderRepository { Task<Order?> Get(OrderId id, CancellationTok
 Public setters on entities · a data class plus a service holding its rules (anemic model) · an
 aggregate holding another aggregate as a field · `DbContext`, `MediatR`, `ILogger`, `IMapper`,
 `[Table]` in the domain · a repository per entity · `SaveChanges` on a repository · one transaction
-touching two aggregates · a state change without an event.
+touching two aggregates.
 
 ## Measure, don't estimate
 `scripts/` is inside this skill's directory (normally `~/.claude/skills/ddd/`); use that absolute path.
