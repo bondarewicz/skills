@@ -1,0 +1,1 @@
+../skills/ddd/scripts/ddd.py

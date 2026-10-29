@@ -16,6 +16,8 @@ My personal skills and hooks for Claude Code (and Codex).
 | `hooks/conventional-commits.py` | Symlink to the validator above. Two uses: `hooks/confirm-git.py` imports it to check every `git commit` Claude runs; and it is a git `commit-msg` hook for everyone else, human or agent, in any tool: `ln -s ~/.claude/hooks/conventional-commits.py .git/hooks/commit-msg` in a repo. A rejected message stays in `.git/COMMIT_EDITMSG`. |
 | `skills/estimates/` | Estimates for work Claude does itself, from measured turns instead of human units. `scripts/estimates.py` splits every transcript in `~/.claude/projects` into turns (one per prompt) and records active and idle minutes, lines written (edit tools and Bash heredocs), tool calls and test runs in `~/.claude/state/estimates/ledger.jsonl`, then prints a pace table by size class (XS to XL by lines written: median and p90 active minutes). The skill fixes the estimate line: Claude's minutes as the class's median to p90 with n, the user's minutes separately. `--recent` shows actuals, `--check` runs the detector. Tests: `scripts/test_estimates.py`. |
 | `hooks/estimates.py` | Symlink to the script above. SessionStart prints the pace table and the rule, seeding the ledger from past transcripts on first run. Stop logs the finished turn, then scans the reply for an estimate in human units (hours, `2h`, days, half a day, an afternoon, weeks, sprints) next to an estimate word and **blocks**, with the table and the exact line shape as the reason, so the reply continues with the corrected estimate in measured minutes. A correction that carries no number is blocked once more, then the hook lets go. Past tense, timeouts and schedules, and sentences naming a human doer pass. `ESTIMATES_MODE=warn` shows the user a notice instead, `off` only logs. |
+| `skills/ddd/` | Domain-Driven Design in C#: the tactical rules Claude applies in a `Domain` folder or `*.Domain` project (dependency rule, aggregate rules, value objects, domain events, repositories, a refuse list), `reference.md` for the strategic side (subdomains, context maps, balancing coupling, sources), and `scripts/ddd.py`, a zero-dependency scanner: `python3 scripts/ddd.py src/` lists every forbidden `using` in domain code and exits 1. |
+| `hooks/ddd.py` | Symlink to the scanner above. SessionStart loads the skill's rules when the repo has a `Domain` folder or `*.Domain` project, silent otherwise. PreToolUse on `Edit\|Write\|MultiEdit` applies the edit in memory and **denies** it when it adds a `using` the domain layer must not depend on (EF Core, AspNetCore, Microsoft.Extensions, MediatR, AutoMapper, System.IO, another layer's namespace, ...); usings already in the file never block. `DDD_MODE=warn` makes it advisory, `off` disables; `DDD_ALLOW=MediatR,System.IO` allowlists. |
 | `hooks/adhd-mode.py` | Keeps the [i-have-adhd](https://github.com/ayghri/i-have-adhd) skill on in every session. At session start it installs the plugin if missing and loads its rules; each prompt gets a one-line reminder. A message of just `stop adhd mode` (or `normal mode`) turns it off for all sessions; `start adhd mode` or `/i-have-adhd` turns it back on. |
 | `install.sh` | Copies skills into `~/.claude/skills` (and/or Codex's `~/.agents/skills`) and hooks into `~/.claude/hooks`. |
 
@@ -38,7 +40,8 @@ Hooks also need a one-time entry in `~/.claude/settings.json`:
     "PreToolUse": [
       { "matcher": "Bash|Edit|Write|NotebookEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/confirm-git.py" }] },
       { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/cognitive-complexity.py" }] },
-      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/code-comments.py" }] }
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/code-comments.py" }] },
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/ddd.py" }] }
     ],
     "PostToolUse": [
       { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/confirm-git.py" }] },
@@ -46,7 +49,8 @@ Hooks also need a one-time entry in `~/.claude/settings.json`:
     ],
     "SessionStart": [
       { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/adhd-mode.py", "timeout": 300 }] },
-      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/estimates.py" }] }
+      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/estimates.py" }] },
+      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/ddd.py" }] }
     ],
     "Stop": [
       { "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/estimates.py" }] }
