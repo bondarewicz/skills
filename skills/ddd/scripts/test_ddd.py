@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 
 import ddd
-from ddd import forbidden, is_domain_path, parse_allow, pre_tool_use, usings
+from ddd import find_domain_dir, forbidden, is_domain_path, parse_allow, pre_tool_use, session_start, usings
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -106,6 +106,38 @@ class PreToolUse(unittest.TestCase):
     def test_hook_swallows_bad_stdin(self):
         r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "ddd.py")], input="not json", capture_output=True, text=True)
         self.assertEqual((r.returncode, r.stdout), (0, ""))
+
+
+class SessionStart(unittest.TestCase):
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.cfg = os.path.join(self.d, "cfg")
+        os.makedirs(os.path.join(self.cfg, "skills", "ddd"))
+        Path(self.cfg, "skills", "ddd", "SKILL.md").write_text("---\nname: ddd\n---\n# DDD\nRULE ONE\n")
+        self.env = {"CLAUDE_CONFIG_DIR": self.cfg}
+        self.saved, ddd.SKILL_NEXT_TO_SCRIPT = ddd.SKILL_NEXT_TO_SCRIPT, Path(self.d, "absent.md")
+
+    def tearDown(self):
+        ddd.SKILL_NEXT_TO_SCRIPT = self.saved
+
+    def test_finds_domain_dir(self):
+        os.makedirs(os.path.join(self.d, "src", "Acme.Orders.Domain"))
+        os.makedirs(os.path.join(self.d, "node_modules", "x", "domain"))
+        self.assertEqual(find_domain_dir(self.d), os.path.join("src", "Acme.Orders.Domain"))
+
+    def test_emits_rules_from_installed_skill(self):
+        os.makedirs(os.path.join(self.d, "X.Domain"))
+        out = session_start({"hook_event_name": "SessionStart", "cwd": self.d}, self.env)
+        ctx = out["additionalContext"]
+        self.assertTrue(ctx.startswith("DDD mode: domain code at X.Domain."), ctx[:60])
+        self.assertIn("RULE ONE", ctx)
+        self.assertNotIn("name: ddd", ctx)
+
+    def test_silent_without_domain_or_skill(self):
+        self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, self.env))
+        os.makedirs(os.path.join(self.d, "X.Domain"))
+        self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, {"CLAUDE_CONFIG_DIR": self.d}))
+        self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, {**self.env, "DDD_MODE": "off"}))
 
 
 if __name__ == "__main__":

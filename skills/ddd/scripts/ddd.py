@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 
 FORBIDDEN = {
     "data": ("Microsoft.EntityFrameworkCore", "System.Data", "System.ComponentModel.DataAnnotations.Schema", "Dapper",
@@ -31,6 +32,9 @@ FORBIDDEN = {
 }
 LAYER_SEGMENTS = frozenset({"infrastructure", "infra", "application", "api", "webapi", "web", "presentation", "persistence",
                             "adapters", "controllers"})
+SKIP_DIRS = {".git", "node_modules", "bin", "obj", "dist", "packages", ".vs", ".idea"}
+SKILL_NEXT_TO_SCRIPT = Path(__file__).resolve().parent.parent / "SKILL.md"
+FRONTMATTER = re.compile(r"\A---[^\n]*\n.*?\n---[^\n]*(\n|\Z)", re.S)
 USING_RE = re.compile(r"^\s*(?:global\s+)?using\s+(?:static\s+)?(?!var\b)([A-Za-z_][\w.]*)(?:\s*=\s*([A-Za-z_][\w.]*))?\s*;")
 
 
@@ -135,9 +139,46 @@ def pre_tool_use(data, env):
     return out
 
 
+def _is_domain_dir(name):
+    return name.lower() == "domain" or name.lower().endswith(".domain")
+
+
+def find_domain_dir(root, depth=6):
+    for cur, dirs, _ in os.walk(root):
+        dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+        for d in dirs:
+            if _is_domain_dir(d):
+                return os.path.relpath(os.path.join(cur, d), root)
+        if os.path.relpath(cur, root).count(os.sep) + 1 >= depth:
+            dirs[:] = []
+    return None
+
+
+def skill_body(env):
+    installed = Path(env.get("CLAUDE_CONFIG_DIR") or "~/.claude").expanduser() / "skills" / "ddd" / "SKILL.md"
+    for f in (SKILL_NEXT_TO_SCRIPT, installed):
+        if f.is_file():
+            return FRONTMATTER.sub("", f.read_text(encoding="utf-8"), count=1).strip()
+    return None
+
+
+def session_start(data, env):
+    if env.get("DDD_MODE", "block").lower() == "off":
+        return None
+    rel = find_domain_dir(data.get("cwd") or os.getcwd())
+    body = skill_body(env) if rel else None
+    if not body:
+        return None
+    return {"hookEventName": "SessionStart",
+            "additionalContext": f"DDD mode: domain code at {rel}. Rules follow; the ddd hook denies forbidden usings there.\n\n{body}"}
+
+
 def hook_output(data, env):
-    if data.get("hook_event_name") == "PreToolUse":
+    event = data.get("hook_event_name")
+    if event == "PreToolUse":
         return pre_tool_use(data, env)
+    if event == "SessionStart":
+        return session_start(data, env)
     return None
 
 
