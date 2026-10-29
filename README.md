@@ -7,7 +7,7 @@ My personal skills and hooks for Claude Code (and Codex).
 | Path | What it is |
 |---|---|
 | `skills/experiment-loop/` | `/experiment-loop <goal>`: Karpathy-style autoresearch loop for any repo. Locked scorer, test gate, noise-aware keep-or-undo judge, budget. Manual-only. |
-| `hooks/confirm-git.py` | Before the first file change in a git repo, Claude must ask how commits are authored: **Me only, GPG signed** or **Me + Claude, unsigned**. The answer is recorded by the hook itself, and every commit is checked against it. Every `git commit` / `git push` shows a confirmation prompt (repo, branch, remote, author, message, local vs push, and why), even in auto mode. |
+| `hooks/confirm-git.py` | Before the first file change in a git repo, Claude must ask how commits are authored: **Me only, GPG signed** or **Me + Claude, unsigned**. The answer is recorded by the hook itself, and every commit is checked against it. Commit messages must be [Conventional Commits](https://www.conventionalcommits.org); a breaking change needs both `!` in the header and a `BREAKING CHANGE:` footer. Every `git commit` / `git push` shows a confirmation prompt (repo, branch, remote, author, message, local vs push, and why), even in auto mode. |
 | `install.sh` | Copies skills into `~/.claude/skills` (and/or Codex's `~/.agents/skills`) and hooks into `~/.claude/hooks`. |
 
 ## Install

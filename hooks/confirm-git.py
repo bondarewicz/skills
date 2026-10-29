@@ -11,6 +11,8 @@ Hook: Claude never commits or pushes without you knowing, and never with the wro
      "Me + Claude, unsigned" -> coauthor: Co-Authored-By: Claude line, unsigned commit
 2. PreToolUse Bash with `git commit` / `git push`:
    - a commit that doesn't match the choice (or has no choice) is blocked with the reason;
+   - a commit message that isn't a Conventional Commit is blocked; breaking changes need both
+     `!` in the header and a `BREAKING CHANGE:` footer;
    - otherwise a permission prompt (even in auto mode) shows what, where, why,
      and whether anything leaves the machine.
 
@@ -104,17 +106,72 @@ def find_actions(command, cwd):
     return actions
 
 
-def message_of(args):
+def unheredoc(text):
+    """`$(cat <<'EOF' ... EOF)` -> the text inside; anything else unchanged."""
+    m = re.match(r"^\$\(cat <<-?'?(\w+)'?\n(.*?)\n\s*\1\s*\)$", text.strip(), re.S)
+    return m.group(2) if m else text
+
+
+def full_message(args, cwd):
+    """Whole commit message from -m/--message (several join as paragraphs) or -F, else None."""
+    parts = []
     for i, a in enumerate(args):
         if a in ("-m", "--message") and i + 1 < len(args):
-            return args[i + 1]
-        if a.startswith("--message="):
-            return a.split("=", 1)[1]
-        if a.startswith("-m") and len(a) > 2:
-            return a[2:]
+            parts.append(args[i + 1])
+        elif a.startswith("--message="):
+            parts.append(a.split("=", 1)[1])
+        elif a.startswith("-m") and len(a) > 2 and not a.startswith("--"):
+            parts.append(a[2:])
+        elif a in ("-F", "--file") and i + 1 < len(args):
+            try:
+                parts.append(Path(cwd, args[i + 1]).read_text())
+            except OSError:
+                return None
+    return "\n\n".join(unheredoc(p).strip() for p in parts) if parts else None
+
+
+def message_of(args, cwd="."):
+    msg = full_message(args, cwd)
+    if msg is not None:
+        return msg
     if "--amend" in args and "--no-edit" in args:
         return "(keeps the previous commit message)"
     return "(no -m given: an editor or a file supplies it)"
+
+
+CC_TYPES = "feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert"
+CC_HEADER = re.compile(rf"^(?:{CC_TYPES})(?:\([\w./-]+\))?(!)?: \S")
+CC_FOOTER = re.compile(r"^BREAKING[ -]CHANGE: \S", re.M)
+
+
+def is_breaking(msg):
+    m = CC_HEADER.match(msg)
+    return bool((m and m.group(1)) or CC_FOOTER.search(msg))
+
+
+def conventional_problem(args, cwd):
+    """Why this commit message isn't a proper Conventional Commit, or ''."""
+    if "--amend" in args and "--no-edit" in args:
+        return ""  # keeps a message that was checked when it was first made
+    msg = full_message(args, cwd)
+    if msg is None:
+        return "Give the commit message with -m (or -F <file>) so it can be checked as a Conventional Commit."
+    header = msg.splitlines()[0] if msg else ""
+    m = CC_HEADER.match(header)
+    if not m:
+        return (f"Commit header \"{header[:100]}\" is not a Conventional Commit. Use "
+                f"`type(scope): description` with type one of {CC_TYPES.replace('|', ', ')}; "
+                "add `!` before the colon for a breaking change.")
+    bang, footer = bool(m.group(1)), bool(CC_FOOTER.search(msg))
+    if bang and not footer:
+        return "Header marks a breaking change (`!`) but there is no `BREAKING CHANGE: <what breaks and how to migrate>` footer. Add it."
+    if footer and not bang:
+        return "Message has a BREAKING CHANGE footer but the header has no `!` (e.g. `feat(api)!: ...`). Add it."
+    body = "\n".join(msg.splitlines()[1:])  # a header may describe breaking changes as a topic
+    if not footer and re.search(r"breaking[ -]?change", body, re.I):
+        return ("Message mentions a breaking change informally. If it breaks something, use `!` in the header and a "
+                "`BREAKING CHANGE: ...` footer (exact capitals); otherwise reword.")
+    return ""
 
 
 def author_problem(mode, command):
@@ -144,7 +201,9 @@ def describe(action, args, d, mode):
         flags = [f for f in ("--amend", "--no-verify", "-a", "--all") if f in args]
         if flags:
             lines.append("Flags:   " + " ".join(flags) + ("  (rewrites the last commit)" if "--amend" in args else ""))
-        lines.append("Message: " + message_of(args).strip().splitlines()[0][:200])
+        msg = message_of(args, d).strip()
+        lines.append("Message: " + (msg.splitlines()[0][:200] if msg else "(empty)"))
+        lines.append("Breaking: " + ("YES - check that it really breaks something" if is_breaking(msg) else "no"))
         staged = git(d, "diff", "--cached", "--stat")
         lines.append("Staged now:\n" + ("\n".join(staged.splitlines()[-12:]) if staged else "  (nothing staged yet; an earlier step of this command may stage files)"))
     else:
@@ -178,10 +237,11 @@ def on_bash(data):
     if actions is None:
         body = f"Could not parse the command; review it below.\nWorking dir: {cwd}"
     else:
-        if any(a[0] == "commit" for a in actions):
-            problem = author_problem(mode, command)
-            if problem:
-                return emit("PreToolUse", "deny", problem)
+        for action, args, d in actions:
+            if action == "commit":
+                problem = author_problem(mode, command) or conventional_problem(args, d)
+                if problem:
+                    return emit("PreToolUse", "deny", problem)
         body = "\n\n".join(describe(*a, mode) for a in actions)
 
     emit("PreToolUse", "ask", f"Claude wants to run git:\n\n{body}\n\nWhy (Claude's description): {why}\n\n"
