@@ -140,5 +140,21 @@ class SessionStart(unittest.TestCase):
         self.assertIsNone(session_start({"hook_event_name": "SessionStart", "cwd": self.d}, {**self.env, "DDD_MODE": "off"}))
 
 
+class Cli(unittest.TestCase):
+    def test_tree(self):
+        d = tempfile.mkdtemp()
+        dom = os.path.join(d, "A.Domain")
+        os.makedirs(dom)
+        os.makedirs(os.path.join(d, "A.Api"))
+        Path(dom, "Bad.cs").write_text("using Dapper;\n")
+        Path(dom, "Ok.cs").write_text("using A.Domain;\n")
+        Path(d, "A.Api", "C.cs").write_text("using Dapper;\n")
+        r = subprocess.run([sys.executable, "-I", os.path.join(HERE, "ddd.py"), d], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 1)
+        self.assertEqual(r.stdout.strip(), f"{os.path.join(dom, 'Bad.cs')}:1  using Dapper;  (data)")
+        Path(dom, "Bad.cs").write_text("using A.Domain;\n")
+        self.assertEqual(subprocess.run([sys.executable, "-I", os.path.join(HERE, "ddd.py"), d], capture_output=True).returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()

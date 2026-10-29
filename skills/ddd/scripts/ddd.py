@@ -188,7 +188,37 @@ def hook():
         print(json.dumps({"hookSpecificOutput": out}))
 
 
+# CLI
+
+def scan(paths, allow=()):
+    rows = []
+    for p in paths:
+        files = [p]
+        if os.path.isdir(p):
+            files = []
+            for cur, dirs, names in os.walk(p):
+                dirs[:] = sorted(d for d in dirs if d not in SKIP_DIRS)
+                files += (os.path.join(cur, n) for n in sorted(names))
+        for f in files:
+            if is_domain_path(f):
+                with open(f, encoding="utf-8", errors="replace") as fh:
+                    rows += ((f, n, ns, group) for n, ns, group in forbidden(fh.read(), allow))
+    return rows
+
+
+def main(argv):
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    rows = scan(argv, parse_allow(os.environ.get("DDD_ALLOW")))
+    for f, n, ns, group in rows:
+        print(f"{f}:{n}  using {ns};  ({group})")
+    return 1 if rows else 0
+
+
 if __name__ == "__main__":
+    if sys.argv[1:]:
+        sys.exit(main(sys.argv[1:]))
     if sys.stdin.isatty():
         print(__doc__)
         sys.exit(2)
