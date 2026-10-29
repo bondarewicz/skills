@@ -8,6 +8,7 @@ My personal skills and hooks for Claude Code (and Codex).
 |---|---|
 | `skills/experiment-loop/` | `/experiment-loop <goal>`: Karpathy-style autoresearch loop for any repo. Locked scorer, test gate, noise-aware keep-or-undo judge, budget. Manual-only. |
 | `hooks/confirm-git.py` | Before the first file change in a git repo, Claude must ask how commits are authored: **Me only, GPG signed** or **Me + Claude, unsigned**. The answer is recorded by the hook itself, and every commit is checked against it. Commit messages must be [Conventional Commits](https://www.conventionalcommits.org); a breaking change needs both `!` in the header and a `BREAKING CHANGE:` footer. Every `git commit` / `git push` shows a confirmation prompt (repo, branch, remote, author, message, local vs push, and why), even in auto mode. |
+| `hooks/adhd-mode.py` | Keeps the [i-have-adhd](https://github.com/ayghri/i-have-adhd) skill on in every session. At session start it installs the plugin if missing and loads its rules; each prompt gets a one-line reminder. A message of just `stop adhd mode` (or `normal mode`) turns it off for all sessions; `start adhd mode` or `/i-have-adhd` turns it back on. |
 | `install.sh` | Copies skills into `~/.claude/skills` (and/or Codex's `~/.agents/skills`) and hooks into `~/.claude/hooks`. |
 
 ## Install
@@ -31,6 +32,12 @@ Hooks also need a one-time entry in `~/.claude/settings.json`:
     ],
     "PostToolUse": [
       { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/confirm-git.py" }] }
+    ],
+    "SessionStart": [
+      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/adhd-mode.py", "timeout": 300 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/adhd-mode.py" }] }
     ]
   }
 }
