@@ -14,7 +14,10 @@ Hook  python3 -I ddd.py < event.json
       off disables both events. DDD_ALLOW=MediatR,System.IO removes prefixes from the forbidden list.
       Prints nothing and exits 0 when there is nothing to say or on any internal failure.
 """
+import json
+import os
 import re
+import sys
 
 FORBIDDEN = {
     "data": ("Microsoft.EntityFrameworkCore", "System.Data", "System.ComponentModel.DataAnnotations.Schema", "Dapper",
@@ -75,3 +78,81 @@ def forbidden(text, allow=()):
         if group:
             rows.append((n, ns, group))
     return rows
+
+
+# hook
+
+def apply_edit(text, edit):
+    old, new = edit.get("old_string", ""), edit.get("new_string", "")
+    if old not in text:
+        return None
+    return text.replace(old, new) if edit.get("replace_all") else text.replace(old, new, 1)
+
+
+def new_content(tool, tool_input, old):
+    if tool == "Write":
+        return tool_input.get("content") or ""
+    if tool == "Edit":
+        return apply_edit(old, tool_input)
+    if tool == "MultiEdit":
+        new = old
+        for e in tool_input.get("edits") or []:
+            new = apply_edit(new, e) if new is not None else None
+        return new
+    return None
+
+
+def pre_tool_use(data, env):
+    mode = env.get("DDD_MODE", "block").lower()
+    ti = data.get("tool_input") or {}
+    path = ti.get("file_path") or ""
+    if mode == "off" or not is_domain_path(path):
+        return None
+    old = ""
+    if os.path.exists(path):
+        with open(path, encoding="utf-8", errors="replace") as f:
+            old = f.read()
+    new = new_content(data.get("tool_name"), ti, old)
+    if new is None or new == old:
+        return None
+    present = {ns for _, ns in usings(old)}
+    rows = [r for r in forbidden(new, parse_allow(env.get("DDD_ALLOW"))) if r[1] not in present]
+    if not rows:
+        return None
+    rel = os.path.relpath(path, data.get("cwd") or os.getcwd())
+    if rel.startswith(".."):
+        rel = path
+    lines = "\n".join(f"  {rel}:{n}  using {ns};  ({group})" for n, ns, group in rows)
+    msg = (f"ddd: this edit adds {len(rows)} using{'s' if len(rows) != 1 else ''} the domain layer must not depend on:\n{lines}\n"
+           "Keep the domain free of infrastructure: declare an interface (port) here and implement it in the "
+           "infrastructure project. Resubmit the edit without these usings. Rules: the ddd skill.")
+    out = {"hookEventName": "PreToolUse"}
+    if mode == "block":
+        out.update(permissionDecision="deny",
+                   permissionDecisionReason=msg + " (DDD_MODE=warn makes this advisory; DDD_ALLOW=<namespace,...> allowlists.)")
+    else:
+        out["additionalContext"] = msg
+    return out
+
+
+def hook_output(data, env):
+    if data.get("hook_event_name") == "PreToolUse":
+        return pre_tool_use(data, env)
+    return None
+
+
+def hook():
+    out = hook_output(json.load(sys.stdin), os.environ)
+    if out:
+        print(json.dumps({"hookSpecificOutput": out}))
+
+
+if __name__ == "__main__":
+    if sys.stdin.isatty():
+        print(__doc__)
+        sys.exit(2)
+    try:
+        hook()
+    except Exception:
+        pass
+    sys.exit(0)
