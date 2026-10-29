@@ -178,6 +178,16 @@ class Python(unittest.TestCase):
         self.assertIsNone(scan(PY, "a.py")[11].comment)
 
 
+class ReturnsTags(unittest.TestCase):
+    def test_echoing_the_return_type_is_restating(self):
+        self.assertEqual(judge("<returns>The invoice.</returns>", False, "public Invoice? Get(Guid id)", True), "restating")
+        self.assertEqual(judge("@returns the user", False, "getUser(id: string): Promise<User> {", True), "restating")
+
+    def test_saying_more_passes(self):
+        self.assertIsNone(judge("<returns>The invoice, or null when the id is unknown.</returns>", False, "public Invoice? Get(Guid id)", True))
+        self.assertIsNone(judge("@returns the user, or null if the token has expired", False, "getUser(id: string): Promise<User> {", True))
+
+
 class Judge(unittest.TestCase):
     def test_why_comments_pass(self):
         for text, code in [

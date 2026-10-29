@@ -158,6 +158,7 @@ SYN = {"return": {"return", "=>"}, "loop": {"for", "while", "foreach", "each", "
        "prune": {"delete", "remove", "filter", "prune", "splice"}, "drop": {"delete", "remove", "drop", "splice"},
        "apply": {"apply", "*", "-", "+", "="}, "accumulate": {"+=", "sum", "total"}, "multiply": {"*"},
        "divide": {"/"}, "subtract": {"-"}, "exist": {"if", "has", "exist", "in"}}
+RETURNS_TAG = re.compile(r"^(@returns?\s*:?|<returns>)\s*(?P<t>.*?)\s*(</returns>)?$", re.I)
 TYPE_DEF = re.compile(r"\b(class|struct|interface|record|enum|trait|impl|module|object)\s+([A-Z]\w*)")
 CAUSAL = re.compile(r"\b(because|since|so that|otherwise|unless|in case|avoids?|prevents?|workaround|instead|rather than|must|cannot|can't|won't|would|was|were|needs?|requires?)\b", re.I)
 SYM = re.compile(r"\+\+|--|\+=|-=|\*=|/=|===|==|!==|!=|<=|>=|=>|->|\?\?|\?\.|\|\||&&|\.\.\.|[=+\-*/<>!?.(\[{%]")
@@ -364,6 +365,9 @@ def judge(text, first, code_after, doc):
         return None
     if TAG_RESTATES.match(s):
         return "restating"
+    m = RETURNS_TAG.match(s)
+    if m:  # "<returns>The invoice.</returns>" above "Invoice? Get(Guid id)"
+        return "restating" if code_after and restates(m.group("t"), code_after) else None
     if EXEMPT.match(s) or EXEMPT.match(bare):
         return None
     if looks_like_code(s):
