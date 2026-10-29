@@ -149,6 +149,19 @@ def is_breaking(msg):
     return bool((m and m.group(1)) or CC_FOOTER.search(msg))
 
 
+def shared_validator():
+    """validate() from conventional-commits.py next to this file (the conventional-commits skill), else None."""
+    import importlib.util
+    path = Path(__file__).resolve().parent / "conventional-commits.py"
+    try:
+        spec = importlib.util.spec_from_file_location("conventional_commits", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.validate
+    except Exception:
+        return None
+
+
 def conventional_problem(args, cwd):
     """Why this commit message isn't a proper Conventional Commit, or ''."""
     if "--amend" in args and "--no-edit" in args:
@@ -156,6 +169,9 @@ def conventional_problem(args, cwd):
     msg = full_message(args, cwd)
     if msg is None:
         return "Give the commit message with -m (or -F <file>) so it can be checked as a Conventional Commit."
+    validate = shared_validator()
+    if validate:
+        return "; ".join(validate(msg))
     header = msg.splitlines()[0] if msg else ""
     m = CC_HEADER.match(header)
     if not m:

@@ -1,0 +1,1 @@
+../skills/conventional-commits/scripts/cc.py
