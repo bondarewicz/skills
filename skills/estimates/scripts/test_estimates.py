@@ -25,6 +25,8 @@ HUMAN_SCALE = [
     "This is roughly one sprint.",
     "Plan on an afternoon for the rewrite.",
     "- Estimate: all day, mostly tests.",
+    "The migration will take about a month.",
+    'The screen is 6" wide, and this will take about 3 hours.\nThen "done".',
 ]
 
 NOT_AN_ESTIMATE = [
@@ -39,6 +41,13 @@ NOT_AN_ESTIMATE = [
     "We met for 2 hours yesterday.",
     "The 2-hour meeting is at noon.",
     "I estimate 40 minutes for this turn.",
+    "Redis on its own Fly machine costs about $2.50 to $4 a month.",
+    "- **Fixed plans** start at $10 a month for 250 MB.",
+    "Redis costs about two fifty to four dollars a month, a bit more in Frankfurt.",
+    "That saves about a dollar or two a month for a small site.",
+    "Backups run about twice a day.",
+    'Real estimates like "the migration will take about a month" are still caught.',
+    "The hook flagged “this will take about two days” in the reply.",
 ]
 
 

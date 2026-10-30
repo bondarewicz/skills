@@ -56,7 +56,11 @@ EXCLUDE = re.compile(r"\b(?:took|spent|elapsed|lasted|ago|was|were|has been|have
                      r"humans?|developers?|devs?|engineers?|person|people|someone|contractors?|team|by hand|"
                      r"manually|junior|senior|you|your|yours|yourself|"
                      r"meetings?|calls?|workshops?|old|yesterday|last week|last month)\b", re.I)
-CODE = re.compile(r"```.*?```|`[^`\n]*`|https?://\S+", re.S)
+# "$4 a month", "two dollars a day", "twice a week": a/an after an amount is a rate, not a duration.
+RATE_BEFORE = re.compile(r"(?:\d|[$€£]|\b(?:dollars?|euros?|pounds?|cents?|bucks|usd|eur|gbp|once|twice|times|"
+                         r"one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve))\W*$", re.I)
+# Double-quoted text is a quote (hook output, the user, an example), not Claude's estimate; one line only.
+CODE = re.compile(r"```.*?```|`[^`\n]*`|https?://\S+|\"[^\"\n]{1,200}\"|“[^”\n]{1,200}”", re.S)
 MINUTES = re.compile(r"\b\d+(?:\.\d+)?\s*(?:(?:to|-|–|or)\s*\d+(?:\.\d+)?\s*)?min(?:ute)?s?\b", re.I)
 SHAPE = ("Claude: <median> to <p90> min (<class>, ~<lines> lines in <files> files, n=<turns>). "
          "You: ~<minutes> min (<what they read or decide>).")
@@ -88,6 +92,8 @@ def find_estimates(text):
         if EXCLUDE.search(sentence) or not CONTEXT.search(sentence):
             continue
         for m in DURATION.finditer(sentence):
+            if re.match(r"an?\s", m.group(0), re.I) and RATE_BEFORE.search(sentence[:m.start()]):
+                continue
             hits.append((m.group(0), sentence.strip()))
     return hits
 
