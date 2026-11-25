@@ -19,6 +19,9 @@ My personal skills and hooks for Claude Code (and Codex).
 | `skills/ddd/` | Domain-Driven Design in C#: the tactical rules Claude applies in a `Domain` folder or `*.Domain` project (dependency rule, aggregate rules, value objects, domain events, repositories, a refuse list), `reference.md` for the strategic side (subdomains, context maps, balancing coupling, sources), and `scripts/ddd.py`, a zero-dependency scanner: `python3 scripts/ddd.py src/` lists every forbidden `using` in domain code and exits 1. |
 | `hooks/ddd.py` | Symlink to the scanner above. SessionStart loads the skill's rules when the repo has a `Domain` folder or `*.Domain` project, silent otherwise. PreToolUse on `Edit\|Write\|MultiEdit` applies the edit in memory and **denies** it when it adds a `using` the domain layer must not depend on (EF Core, AspNetCore, Microsoft.Extensions, MediatR, AutoMapper, System.IO, another layer's namespace, ...); usings already in the file never block. `DDD_MODE=warn` makes it advisory, `off` disables; `DDD_ALLOW=MediatR,System.IO` allowlists. |
 | `hooks/adhd-mode.py` | Keeps the [i-have-adhd](https://github.com/ayghri/i-have-adhd) skill on in every session. At session start it installs the plugin if missing and loads its rules; each prompt gets a one-line reminder. A message of just `stop adhd mode` (or `normal mode`) turns it off for all sessions; `start adhd mode` or `/i-have-adhd` turns it back on. |
+| `hooks/stop-gate.py` | Stop hook: Claude cannot end a turn while the repo's own check command fails. The command comes from `~/.claude/stop-gate.json`, a map of repo root to shell command (`{"/Users/me/code/app": "npm run typecheck && npm test"}`); a repo with no entry is never gated, and the file sits outside the repo so a cloned repo cannot make the hook run its commands. Runs once per working-tree state: an unchanged tree is not re-checked, so question-only turns cost nothing and a failure Claude cannot fix **blocks** one time only, with the tail of the output as the reason. A timeout (`STOP_GATE_TIMEOUT`, 540 s) shows a notice and lets the turn end. Also on SessionStart (`startup`): in a git repo with no entry it shows a one-line reminder to add one; an entry of `""` means no gate and silences it. |
+| `hooks/redact-secrets.py` | PreToolUse on `Bash`: replaces a live-looking secret in the command (Stripe live keys, Anthropic, OpenAI, GitHub, Slack, AWS access key ids, Google API keys) with `<REDACTED_SECRET>` through `updatedInput`, and tells Claude to read the value from an environment variable instead. Returns no permission decision, so the rewritten command still goes through the normal permission flow; in auto mode Claude Code may refuse a rewritten call. A search for the bare prefix (`grep sk_live_`) is left alone. |
+| `hooks/compact-state.py` | SessionStart on the `compact` matcher: after compaction, prints the files the session edited (newest first, from the transcript) and the uncommitted changes, so Claude resumes on the same files. |
 | `install.sh` | Copies skills into `~/.claude/skills` (and/or Codex's `~/.agents/skills`) and hooks into `~/.claude/hooks`. |
 
 ## Install
@@ -41,7 +44,8 @@ Hooks also need a one-time entry in `~/.claude/settings.json`:
       { "matcher": "Bash|Edit|Write|NotebookEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/confirm-git.py" }] },
       { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/cognitive-complexity.py" }] },
       { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/code-comments.py" }] },
-      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/ddd.py" }] }
+      { "matcher": "Edit|Write|MultiEdit", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/ddd.py" }] },
+      { "matcher": "Bash", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/redact-secrets.py" }] }
     ],
     "PostToolUse": [
       { "matcher": "AskUserQuestion", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/confirm-git.py" }] },
@@ -50,10 +54,13 @@ Hooks also need a one-time entry in `~/.claude/settings.json`:
     "SessionStart": [
       { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/adhd-mode.py", "timeout": 300 }] },
       { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/estimates.py" }] },
-      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/ddd.py" }] }
+      { "matcher": "startup|resume|clear|compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/ddd.py" }] },
+      { "matcher": "compact", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/compact-state.py" }] },
+      { "matcher": "startup", "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/stop-gate.py" }] }
     ],
     "Stop": [
-      { "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/estimates.py" }] }
+      { "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/estimates.py" }] },
+      { "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/stop-gate.py", "timeout": 600 }] }
     ],
     "UserPromptSubmit": [
       { "hooks": [{ "type": "command", "command": "python3 -I ~/.claude/hooks/adhd-mode.py" }] }
@@ -63,3 +70,5 @@ Hooks also need a one-time entry in `~/.claude/settings.json`:
 ```
 
 Start a new session after installing.
+
+Tests for the hooks that have no skill of their own: `python3 tests/test_hooks.py`.
